@@ -13,12 +13,11 @@ RAVDESS_VIDEO_CSV = DATA_DIR / "ravdess_video_index.csv"
 # -----------------------------
 #   AUDIO & FEATURES
 # -----------------------------
-SAMPLE_RATE = 16000
-NUM_MEL = 64
-
-NUM_FFT = 1024        # FFT window size
-HOP_LENGTH = 512      # Hop size between frames
-SEGMENT_SEC = 3       # Duration of each audio segment
+SAMPLE_RATE = 16000          # Audio sample rate
+NUM_MEL = 64                 # Number of Mel frequency bands
+NUM_FFT = 1024               # FFT window size
+HOP_LENGTH = 512             # Hop size between frames
+SEGMENT_SEC = 3              # Duration of each audio segment
 
 # -----------------------------
 #   DATASET / TRAINING PARAMS
@@ -34,8 +33,8 @@ VAL_SPLIT = 0.2
 # -----------------------------
 #   MODEL SELECTION
 # -----------------------------
-# "crnn" or "transformer"
-MODEL_TYPE = "transformer"
+# Options: "crnn" or "transformer"
+MODEL_TYPE = "crnn"
 
 # -----------------------------
 #   TRANSFORMER HYPERPARAMETERS
@@ -48,8 +47,14 @@ TRANSFORMER_NUM_LAYERS = 3
 # -----------------------------
 #   DATA AUGMENTATION OPTIONS
 # -----------------------------
-USE_AUGMENTATIONS = True     # master ON/OFF switch
+USE_AUGMENTATIONS = True       # Master switch for augmentations
 
-AUG_NOISE = True             # Gaussian noise
-AUG_FREQ_MASK = True         # frequency masking
-AUG_TIME_MASK = True         # time masking
+AUG_NOISE = True               # Add Gaussian noise
+AUG_FREQ_MASK = True           # Apply frequency masking
+AUG_TIME_MASK = True           # Apply time masking
+
+# -----------------------------
+#   OTHER OPTIONS
+# -----------------------------
+# For evaluation / feature extraction
+FEATURE_EXTRACTOR_TYPE = "mel"   # Currently only mel spectrogram supported

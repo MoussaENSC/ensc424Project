@@ -114,12 +114,7 @@ def validate(model, loader, device):
     macro_f1 = f1_score(all_labels, all_preds, average="macro")
     uar = balanced_accuracy_score(all_labels, all_preds)
 
-    return (
-        val_loss / len(loader.dataset),
-        acc,
-        macro_f1,
-        uar
-    )
+    return val_loss / len(loader.dataset), acc, macro_f1, uar
 
 
 # --------------------------
@@ -142,13 +137,19 @@ def main():
     # --------------------------
     #  SWITCH MODELS HERE
     # --------------------------
-    if config.MODEL_TYPE == "crnn":
+    if config.MODEL_TYPE.lower() == "crnn":
+        print("model: crnn")
         model = CRNN().to(device)
     else:
-        model = SERTransformer().to(device)
+        print("model: SERTransformer")
+        model = SERTransformer(
+            embed_dim=config.TRANSFORMER_EMBED_DIM,
+            num_heads=config.TRANSFORMER_NUM_HEADS,
+            ff_dim=config.TRANSFORMER_FF_DIM,
+            num_layers=config.TRANSFORMER_NUM_LAYERS
+        ).to(device)
 
     optimizer = Adam(model.parameters(), lr=config.LEARNING_RATE)
-
     best_val_loss = float("inf")
 
     for epoch in range(1, config.N_EPOCHS + 1):
@@ -170,7 +171,10 @@ def main():
         # -----------------------
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), "best_model.pth")
+            if config.MODEL_TYPE.lower() == "crnn":
+                torch.save(model.state_dict(), "ser_crnn_best.pth")
+            else:
+                torch.save(model.state_dict(), "ser_transformer_best.pth")
             print("🔥 Saved new best model!")
 
     print("\nTraining complete.")
