@@ -2,10 +2,14 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.optim import Adam
 from tqdm import tqdm
+import numpy as np
+
+from sklearn.metrics import f1_score, balanced_accuracy_score
 
 from .dataset import SERDataset
-from .models import CRNN
+from .models import CRNN, SERTransformer
 from . import config
+
 
 def collate_fn(batch):
     """
@@ -26,6 +30,39 @@ def collate_fn(batch):
     Y = torch.tensor(ys)
     return X.float(), Y.long()
 
+
+# --------------------------
+#   SIMPLE DATA AUGMENTATIONS
+# --------------------------
+def apply_augmentations(x):
+    """
+    x: (B, 1, mel, T)
+    """
+    B, _, M, T = x.shape
+
+    # Gaussian noise
+    if config.AUG_NOISE:
+        noise = torch.randn_like(x) * 0.01
+        x = x + noise
+
+    # Frequency masking
+    if config.AUG_FREQ_MASK:
+        f = np.random.randint(0, M // 6)
+        f0 = np.random.randint(0, M - f)
+        x[:, :, f0:f0 + f, :] = 0
+
+    # Time masking
+    if config.AUG_TIME_MASK:
+        t = np.random.randint(0, T // 6)
+        t0 = np.random.randint(0, T - t)
+        x[:, :, :, t0:t0 + t] = 0
+
+    return x
+
+
+# --------------------------
+#   TRAINING LOOP
+# --------------------------
 def train_epoch(model, loader, optimizer, device):
     model.train()
     loss_fn = torch.nn.CrossEntropyLoss()
@@ -33,6 +70,11 @@ def train_epoch(model, loader, optimizer, device):
 
     for X, y in tqdm(loader, desc="Training"):
         X, y = X.to(device), y.to(device)
+
+        # Apply augmentations ONLY during training
+        if config.USE_AUGMENTATIONS:
+            X = apply_augmentations(X)
+
         optimizer.zero_grad()
         logits = model(X)
         loss = loss_fn(logits, y)
@@ -42,26 +84,47 @@ def train_epoch(model, loader, optimizer, device):
 
     return running_loss / len(loader.dataset)
 
+
+# --------------------------
+#   VALIDATION (with Macro-F1 & UAR)
+# --------------------------
 def validate(model, loader, device):
     model.eval()
     loss_fn = torch.nn.CrossEntropyLoss()
-    correct = 0
-    total = 0
     val_loss = 0
+
+    all_preds = []
+    all_labels = []
 
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
+
             logits = model(X)
             loss = loss_fn(logits, y)
             val_loss += loss.item() * X.size(0)
 
             preds = torch.argmax(logits, dim=1)
-            correct += (preds == y).sum().item()
-            total += y.size(0)
 
-    return val_loss / len(loader.dataset), correct / total
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(y.cpu().numpy())
 
+    # Metrics
+    acc = np.mean(np.array(all_preds) == np.array(all_labels))
+    macro_f1 = f1_score(all_labels, all_preds, average="macro")
+    uar = balanced_accuracy_score(all_labels, all_preds)
+
+    return (
+        val_loss / len(loader.dataset),
+        acc,
+        macro_f1,
+        uar
+    )
+
+
+# --------------------------
+#   MAIN
+# --------------------------
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
@@ -71,19 +134,47 @@ def main():
     val_size = len(dataset) - train_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
-    train_loader = DataLoader(train_ds, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_ds, batch_size=config.BATCH_SIZE,
+                              shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE,
+                            shuffle=False, collate_fn=collate_fn)
 
-    model = CRNN().to(device)
+    # --------------------------
+    #  SWITCH MODELS HERE
+    # --------------------------
+    if config.MODEL_TYPE == "crnn":
+        model = CRNN().to(device)
+    else:
+        model = SERTransformer().to(device)
+
     optimizer = Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+    best_val_loss = float("inf")
 
     for epoch in range(1, config.N_EPOCHS + 1):
         print(f"\nEpoch {epoch}/{config.N_EPOCHS}")
-        loss = train_epoch(model, train_loader, optimizer, device)
-        val_loss, val_acc = validate(model, val_loader, device)
-        print(f"Train Loss: {loss:.4f}  |  Val Loss: {val_loss:.4f}  |  Val Acc: {val_acc:.4f}")
 
-        torch.save(model.state_dict(), f"ser_epoch{epoch}.pth")
+        train_loss = train_epoch(model, train_loader, optimizer, device)
+        val_loss, acc, macro_f1, uar = validate(model, val_loader, device)
+
+        print(
+            f"Train Loss: {train_loss:.4f}  |  "
+            f"Val Loss: {val_loss:.4f}  |  "
+            f"Acc: {acc:.4f}  |  "
+            f"Macro-F1: {macro_f1:.4f}  |  "
+            f"UAR: {uar:.4f}"
+        )
+
+        # -----------------------
+        #  SAVE BEST MODEL
+        # -----------------------
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "best_model.pth")
+            print("🔥 Saved new best model!")
+
+    print("\nTraining complete.")
+
 
 if __name__ == "__main__":
     main()
